@@ -133,7 +133,6 @@ class SimulationConsumerAbstract(mp.Process):
         self._pyrep.launch(
             self._scene,
             headless=not self._gui,
-            write_coppeliasim_stdout_to_file=True
         )
         self._process_io["simulaton_ready"].set()
         self._main_loop()
@@ -184,6 +183,7 @@ class SimulationConsumer(SimulationConsumerAbstract):
         self._shapes = defaultdict(list)
         self._stateful_shape_list = []
         self._arm_list = []
+        self._arm_joints_position_bounds = np.zeros(0)
         self._state_buffer = None
         self._cams = {}
 
@@ -333,9 +333,17 @@ class SimulationConsumer(SimulationConsumerAbstract):
             self._n_joints,
             dtype=np.float32
         )
+        self._arm_joints_position_bounds = np.array([
+            j.get_joint_interval()[1]
+            for j in sum((arm.joints for arm in self._arm_list), start=[])
+        ])
         self._previous_hermite_speeds = np.zeros(self._n_joints)
         self._previous_hermite_accelerations = np.zeros(self._n_joints)
         self.get_joint_upper_velocity_limits()
+
+    @communicate_return_value
+    def get_arm_joints_position_bounds(self):
+        return self._arm_joints_position_bounds
 
     @communicate_return_value
     def add_camera(self, position=None, orientation=None, resolution=[320, 240]):
@@ -386,10 +394,24 @@ class SimulationConsumer(SimulationConsumerAbstract):
             arm.set_joint_target_velocities(velocities[last:next])
             last = next
 
+    def set_joint_target_positions(self, positions):
+        last = 0
+        next = 0
+        for arm, joint_count in zip(self._arm_list, self._arm_joints_count):
+            next += joint_count
+            arm.set_joint_target_positions(positions[last:next])
+            last = next
+
     @communicate_return_value
     def apply_action(self, actions):
         velocities = actions * self._upper_velocity_limits
         self.set_joint_target_velocities(velocities)
+        # positions = (
+        #     (actions + 1) / 2
+        #     * (self._arm_joints_position_bounds[:, 1] - self._arm_joints_position_bounds[:, 0])
+        #     - self._arm_joints_position_bounds[:, 0]
+        # )
+        # self.set_joint_target_positions(positions)
         self.step_sim()
         return self.get_data()
 
@@ -1077,5 +1099,11 @@ if __name__ == '__main__':
     # open_one_environment()
     # test_9(mode='minimalist')
     # test_9(mode='full_raw')
-    take_picture('one_arm_2_buttons_1_levers_1_tap')
-    take_picture('one_arm_4_buttons')
+    # take_picture('one_arm_2_buttons_1_levers_1_tap')
+    # take_picture('one_arm_4_buttons')
+
+    simulation = SimulationProducer(scene=MODEL_PATH + '/custom_timestep.ttt', gui=True)
+    simulation.create_environment()
+    simulation.set_control_loop_enabled(False)
+    simulation.start_sim()
+    simulation.step_sim()

@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import models, layers, optimizers
 from simulation import SimulationPool, MODEL_PATH
+from buffer import Buffer
 
 
 class Procedure:
@@ -14,20 +15,21 @@ class Procedure:
         self.decoder = models.Sequential([
             layers.Dense(50, activation=tf.nn.relu),
             layers.Dense(50, activation=tf.nn.relu),
-            layers.Dense(7, activation=None),
+            layers.Dense(25, activation=None),
         ])
         self.buffer = Buffer(config.buffer_size)
         self.simulations = SimulationPool(
             config.n_simulations,
             scene=MODEL_PATH + '/custom_timestep.ttt',
+            # guis=[],
             guis=[0],
         )
-        self.simulation_pool.set_simulation_timestep(0.2)
+        self.simulations.set_simulation_timestep(0.2)
         self.simulations.create_environment()
-        self.simulation_pool.set_reset_poses()
-        self.simulation_pool.set_control_loop_enabled(False)
-        self.simulation_pool.start_sim()
-        self.simulation_pool.step_sim()
+        self.simulations.set_reset_poses()
+        self.simulations.set_control_loop_enabled(False)
+        self.simulations.start_sim()
+        self.simulations.step_sim()
         print("[procedure] all simulation started")
         self.optimizer = optimizers.Adam(config.learning_rate)
 
@@ -49,14 +51,15 @@ class Procedure:
             states = np.array(self.simulations.get_state())
             all_states.append(states)
             actions = self.encoder(states)
-            self.simulations.apply_action(actions)
+            with self.simulations.distribute_args():
+                self.simulations.apply_action(tuple(a for a in actions))
         self.buffer.integrate(np.concatenate(all_states))
 
     def train(self, batch_size):
         states = self.buffer.sample(batch_size)
         with tf.GradientTape() as tape:
             reconstructions = self.decoder(self.encoder(states))
-            loss = tf.reduce_sum(tf.reduce_mean((states - reconstructions) ^ 2, axis=-1))
+            loss = tf.reduce_sum(tf.reduce_mean((states - reconstructions) ** 2, axis=-1))
             vars = self.encoder.trainable_variables + self.decoder.trainable_variables
             grads = tape.gradient(loss, vars)
             self.optimizer.apply_gradients(zip(grads, vars))
