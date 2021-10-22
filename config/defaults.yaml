@@ -1,0 +1,10 @@
+# procedure
+buffer_size: 10000
+n_simulations: 2
+learning_rate: 1e-3
+
+# experiment
+n_training_steps: 1000
+n_samples_collected_per_training: 2
+batch_size: 64
+log_every: 2
